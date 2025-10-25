@@ -1,0 +1,7 @@
+streamlit
+fastapi
+uvicorn[standard]
+requests
+python-multipart
+prometheus_client
+locust
