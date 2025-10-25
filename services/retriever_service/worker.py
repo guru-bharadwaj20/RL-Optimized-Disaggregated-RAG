@@ -13,14 +13,15 @@ load_dotenv()
 # --- Pydantic Models ---
 class RAGJob(BaseModel):
     """Schema for the RAG job data received from the Encoder Service."""
-    session_id: str = Field(..., description="Unique ID for tracking the job.")
+    job_id: str = Field(..., description="Unique ID for tracking the job.")
     query: str = Field(..., description="The original user query.")
     vector: list[float] = Field(..., description="The encoded query vector.")
+    selected_replica_index: int | None = Field(None, description="Index of selected LLM replica (for load tracking only).")
     timestamp: float = Field(default_factory=time.time, description="Time job was queued.")
 
 class AugmentedPromptJob(BaseModel):
     """Schema for the job data published to the LLM Generator Service."""
-    session_id: str = Field(..., description="Unique ID for tracking the job.")
+    job_id: str = Field(..., description="Unique ID for tracking the job.")
     augmented_prompt: str = Field(..., description="The final prompt including retrieved context.")
     retrieval_time: float = Field(default_factory=time.time, description="Time retrieval was completed.")
 
@@ -31,9 +32,9 @@ REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
 QDRANT_HOST = os.getenv("QDRANT_HOST", "qdrant")
 QDRANT_PORT = int(os.getenv("QDRANT_PORT", 6333)) # Qdrant gRPC default port is 6334, REST default is 6333
 
-# Queue names
-ENCODER_QUEUE = os.getenv("ENCODER_QUEUE", "encoder_queue") # Input queue
-LLM_QUEUE = os.getenv("LLM_QUEUE", "llm_queue")           # Output queue
+# Queue names (align with encoder/llm naming)
+ENCODER_QUEUE = os.getenv("ENCODER_QUEUE", "job:retriever_in") # Input queue from encoder
+LLM_QUEUE = os.getenv("LLM_QUEUE", "job:llm_in")           # Output queue to LLM generator
 
 # RAG configuration
 QDRANT_COLLECTION = os.getenv("QDRANT_COLLECTION", "rag_collection")
@@ -110,9 +111,9 @@ def worker_loop(r: redis.Redis, qdrant_client: QdrantClient):
                 # 1. Parse the incoming job data
                 job_dict = json.loads(serialized_job)
                 job = RAGJob(**job_dict)
-                session_id = job.session_id
-                
-                print(f"[{session_id}] Job received. Starting retrieval for query: '{job.query[:50]}...'")
+                job_id = job.job_id
+
+                print(f"[{job_id}] Job received. Starting retrieval for query: '{job.query[:50]}...'")
 
                 # 2. Perform Vector Search (the core retrieval step using Qdrant)
                 start_time = time.time()
@@ -130,21 +131,21 @@ def worker_loop(r: redis.Redis, qdrant_client: QdrantClient):
                 
                 end_time = time.time()
                 
-                print(f"[{session_id}] Retrieval complete in {end_time - start_time:.4f}s. Found {len(retrieved_docs)} chunks.")
+                print(f"[{job_id}] Retrieval complete in {end_time - start_time:.4f}s. Found {len(retrieved_docs)} chunks.")
 
                 # 3. Augment the Prompt
                 augmented_prompt = create_augmented_prompt(job.query, retrieved_docs)
 
                 # 4. Publish the Augmented Prompt to the next queue (LLM Generator)
                 output_job = AugmentedPromptJob(
-                    session_id=session_id,
+                    job_id=job_id,
                     augmented_prompt=augmented_prompt,
                     retrieval_time=time.time()
                 )
                 
                 # Push the job to the LLM queue
                 r.rpush(LLM_QUEUE, output_job.model_dump_json())
-                print(f"[{session_id}] Augmented prompt published to queue: {LLM_QUEUE}")
+                print(f"[{job_id}] Augmented prompt published to queue: {LLM_QUEUE}")
 
             except redis.exceptions.ConnectionError as e:
                 print(f"ERROR: Redis connection lost. Retrying in 5s. {e}")

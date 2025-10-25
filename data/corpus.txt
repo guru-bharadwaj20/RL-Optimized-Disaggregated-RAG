@@ -1,0 +1,9 @@
+The RAG pipeline uses an Asynchronous Message Queue for decoupling services and smoothing bursts.
+
+Qdrant is a vector store that supports cosine and dot product similarity searches and is suitable for RAG storage.
+
+FastAPI microservices running in containers allow easy scaling and isolation of compute workloads.
+
+In this simple corpus, we provide small documents to test retrieval accuracy. Each paragraph is a document chunk.
+
+Design systems with observability and idempotency in mind to reduce operational overhead.

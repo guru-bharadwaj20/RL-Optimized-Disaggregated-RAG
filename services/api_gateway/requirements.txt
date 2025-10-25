@@ -4,3 +4,5 @@ pydantic
 requests
 redis
 python-dotenv
+gunicorn
+prometheus-client

@@ -8,13 +8,9 @@ from dotenv import load_dotenv
 
 # --- Configuration ---
 load_dotenv()
-# Ollama service details (from .env/docker-compose)
-OLLAMA_HOST = os.getenv("OLLAMA_HOST", "ollama_server")
-OLLAMA_PORT = os.getenv("OLLAMA_PORT", "11434")
-LLM_MODEL = os.getenv("LLM_MODEL", "mistral:7b-instruct")
-
-# The URL for the Ollama API endpoint
-OLLAMA_API_URL = f"http://{OLLAMA_HOST}:{OLLAMA_PORT}/api/generate"
+# LLM service details (from .env/docker-compose)
+LLM_SERVICE_URL = os.getenv("LLM_SERVICE_URL", "http://mock_llm:8000")
+LLM_MOCK_FALLBACK = os.getenv("LLM_MOCK_FALLBACK", "false").lower() in ("1", "true", "yes")
 
 # --- FastAPI Setup ---
 app = FastAPI(title="LLM Generator Service", version="1.0")
@@ -34,56 +30,50 @@ class GeneratorResponse(BaseModel):
 # --- Health Check ---
 @app.get("/health")
 def health_check():
-    """Checks service status and connectivity to the Ollama model."""
+    """Checks service status and connectivity to the LLM service."""
     try:
-        # Check if Ollama is reachable by sending a dummy request (optional but robust)
         response = requests.post(
-            OLLAMA_API_URL,
-            json={"model": LLM_MODEL, "prompt": "Test", "stream": False, "options": {"num_predict": 1}},
+            f"{LLM_SERVICE_URL}/generate",
+            json={"query": "Test"},
             timeout=5
         )
         if response.status_code == 200:
-            return {"status": "ok", "model": LLM_MODEL, "ollama_status": "ready"}
+            return {"status": "ok", "llm_service": LLM_SERVICE_URL}
         else:
-            return {"status": "degraded", "detail": f"Ollama returned status {response.status_code}"}
+            return {"status": "degraded", "detail": f"LLM service returned status {response.status_code}"}
     except requests.exceptions.RequestException:
-        raise HTTPException(status_code=503, detail="Cannot reach Ollama server.")
+        raise HTTPException(status_code=503, detail="Cannot reach LLM service.")
 
 # --- Main Inference Endpoint ---
 @app.post("/generate", response_model=GeneratorResponse)
 async def generate_response(request: GeneratorRequest):
     """
-    Receives an augmented prompt, calls Ollama, and returns the final answer 
+    Receives an augmented prompt, calls the LLM service, and returns the final answer 
     with measured latency (CRITICAL for P99 measurement).
     """
     start_time = time.time()
     
-    # 1. Prepare the payload for Ollama
+    # 1. Prepare the payload for the LLM service
     payload = {
-        "model": LLM_MODEL,
-        "prompt": request.prompt,
-        "stream": False,  # We want the full response at once
-        "options": {
-            "temperature": 0.1,
-            # Limit the output length to save compute time in the hackathon
-            "num_predict": 256 
-        }
+        "query": request.prompt
     }
     
     try:
-        # 2. Call the local Ollama API
-        response = requests.post(OLLAMA_API_URL, json=payload, timeout=60)
-        response.raise_for_status() # Raise exception for 4xx or 5xx errors
+        # 2. Call the LLM service
+        response = requests.post(f"{LLM_SERVICE_URL}/generate", json=payload, timeout=60)
+        response.raise_for_status()
 
         # 3. Parse the generated text
         data = response.json()
-        
-        # Ollama response structure usually contains a 'response' field
-        generated_text = data.get("response", "Error: No response text found.").strip()
+        generated_text = data.get("answer", data.get("response", "Error: No response text found.")).strip()
 
     except requests.exceptions.RequestException as e:
-        print(f"Ollama Request Error for Job {request.job_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to get response from LLM: {e}")
+        print(f"LLM Service Request Error for Job {request.job_id}: {e}")
+        if LLM_MOCK_FALLBACK:
+            mock_text = f"[MOCK LLM] Echo: {request.prompt[:300]}"
+            generated_text = mock_text
+        else:
+            raise HTTPException(status_code=500, detail=f"Failed to get response from LLM service: {e}")
 
     # 4. Measure Latency (The key measurement for the RL scaling demo)
     end_time = time.time()

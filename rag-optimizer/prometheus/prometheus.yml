@@ -2,6 +2,13 @@ global:
   scrape_interval: 5s
 
 scrape_configs:
+  - job_name: 'api_gateway'
+    static_configs:
+      - targets: ['10.7.74.83:8000']
+    metrics_path: '/metrics'
+
   - job_name: 'locust'
     static_configs:
-      - targets: ['locust:8089']
+      - targets: ['10.7.74.83:8090']
+    metrics_path: '/stats/requests'
+

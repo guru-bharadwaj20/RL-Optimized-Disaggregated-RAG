@@ -1,3 +1,66 @@
+"""Ingest sample corpus into Qdrant using sentence-transformers.
+
+This script will:
+- read data/corpus.txt
+- chunk it (simple split by paragraphs)
+- compute embeddings with all-MiniLM-L6-v2
+- create or recreate a Qdrant collection named 'rag_knowledge'
+- upsert points with payload {"document": <chunk_text>}
+
+Usage: python utils/ingestion.py
+"""
+import os
+import json
+from typing import List
+
+from sentence_transformers import SentenceTransformer
+from qdrant_client import QdrantClient, models
+
+MODEL = os.getenv("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
+QDRANT_HOST = os.getenv("QDRANT_HOST", "localhost")
+QDRANT_PORT = int(os.getenv("QDRANT_PORT", 6333))
+COLLECTION = os.getenv("QDRANT_COLLECTION_NAME", "rag_knowledge")
+VECTOR_SIZE = int(os.getenv("VECTOR_DIMENSION", 384))
+
+
+def load_corpus(path: str) -> List[str]:
+    if not os.path.exists(path):
+        raise FileNotFoundError(path)
+    text = open(path, "r", encoding="utf-8").read()
+    # Simple paragraph splitting
+    chunks = [p.strip() for p in text.split("\n\n") if p.strip()]
+    return chunks
+
+
+def embed_chunks(chunks: List[str]):
+    model = SentenceTransformer(MODEL)
+    embeddings = model.encode(chunks, convert_to_tensor=False)
+    return embeddings
+
+
+def main():
+    corpus = load_corpus("data/corpus.txt")
+    print(f"Loaded {len(corpus)} chunks from data/corpus.txt")
+    embeddings = embed_chunks(corpus)
+
+    client = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT)
+    # Recreate collection (safe for dev only)
+    try:
+        client.recreate_collection(collection_name=COLLECTION, vectors_config=models.VectorParams(size=VECTOR_SIZE, distance=models.Distance.COSINE))
+    except Exception:
+        # If recreate fails, try create
+        client.create_collection(collection_name=COLLECTION, vectors_config=models.VectorParams(size=VECTOR_SIZE, distance=models.Distance.COSINE))
+
+    points = []
+    for i, (chunk, emb) in enumerate(zip(corpus, embeddings), start=1):
+        points.append(models.PointStruct(id=i, vector=emb.tolist(), payload={"document": chunk}))
+
+    client.upsert(collection_name=COLLECTION, points=points, wait=True)
+    print(f"Upserted {len(points)} points into Qdrant collection '{COLLECTION}'")
+
+
+if __name__ == '__main__':
+    main()
 import os
 import time
 import numpy as np
