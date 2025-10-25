@@ -1,0 +1,12 @@
+{
+    // Use the project's virtualenv as the workspace interpreter so Pylance and the debugger use the same Python
+    "python.defaultInterpreterPath": "/Users/harshpandya/Documents/Projects/Cache-Me-If-You-Can/myenv/bin/python",
+
+    // Helpful for Pylance to resolve packages in the venv site-packages if needed
+    "python.analysis.extraPaths": [
+        "./myenv/lib/python3.13/site-packages"
+    ],
+
+    // Optional: ensure language server is Pylance
+    "python.languageServer": "Pylance"
+}

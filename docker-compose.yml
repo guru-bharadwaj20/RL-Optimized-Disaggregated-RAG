@@ -1,0 +1,73 @@
+version: '3.8'
+
+services:
+  # Infrastructure Services
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: qdrant
+    ports:
+      - "6333:6333"
+    volumes:
+      - ./qdrant_data:/qdrant/storage
+
+  redis:
+    image: redis:latest
+    container_name: redis
+    ports:
+      - "6379:6379"
+
+  ollama_server:
+    image: ollama/ollama:latest
+    container_name: ollama_server
+    # Command to ensure the Mistral model is served
+    command: ["/bin/bash", "-c", "ollama pull mistral:7b-instruct && ollama serve"]
+    ports:
+      - "11434:11434"
+    # Ensure Ollama has access to GPU if available (optional)
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
+  # Application Microservices (Built Locally)
+  encoder_service:
+    build:
+      context: . # Set build context to the root of the project
+      dockerfile: ./services/encoder_service/Dockerfile
+    container_name: encoder_service
+    # Service uses the base port 8000, mapped to an external port for testing
+    ports:
+      - "8001:8000"
+    environment:
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL} # Pass model name from .env
+      - REDIS_HOST=${REDIS_HOST}
+    depends_on:
+      - redis
+
+  retriever_service:
+    build:
+      context: . # Set build context to the root of the project
+      dockerfile: ./services/retriever_service/Dockerfile
+    container_name: retriever_service
+    environment:
+      - QDRANT_HOST=${QDRANT_HOST}
+      - REDIS_HOST=${REDIS_HOST}
+      - QDRANT_COLLECTION_NAME=${QDRANT_COLLECTION_NAME}
+    depends_on:
+      - redis
+      - qdrant
+
+  llm_generator:
+    build:
+      context: . # Set build context to the root of the project
+      dockerfile: ./services/llm_generator/Dockerfile
+    container_name: llm_generator
+    environment:
+      - OLLAMA_HOST=ollama_server # Pass service name
+      - LLM_MODEL=${LLM_MODEL}
+    depends_on:
+      - ollama_server
+      - redis
