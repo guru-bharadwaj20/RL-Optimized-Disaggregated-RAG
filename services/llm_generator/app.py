@@ -32,11 +32,7 @@ class GeneratorResponse(BaseModel):
 def health_check():
     """Checks service status and connectivity to the LLM service."""
     try:
-        response = requests.post(
-            f"{LLM_SERVICE_URL}/generate",
-            json={"query": "Test"},
-            timeout=5
-        )
+        response = requests.get(f"{LLM_SERVICE_URL}/health", timeout=5)
         if response.status_code == 200:
             return {"status": "ok", "llm_service": LLM_SERVICE_URL}
         else:

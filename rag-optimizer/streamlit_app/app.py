@@ -1,148 +1,201 @@
-import streamlit as st
-from PIL import Image
-import io
-import requests
-import json
+import os
 import time
+import requests
+import streamlit as st
 
-# Configuration
-API_GATEWAY_URL = "http://localhost:8000"
+API_GATEWAY_URL = os.getenv("API_GATEWAY_URL", "http://localhost:8000")
 
-st.set_page_config(page_title="RAG Optimizer Chatbot", layout="wide")
-
-# --- Sidebar ---
-with st.sidebar:
-    st.title("📊 RAG Optimizer Dashboard")
-    st.markdown("Monitor and interact with your optimized RAG system.")
-    st.divider()
-    st.markdown("**Chat Mode:** Text inputs")
-    st.markdown(f"**Backend:** {API_GATEWAY_URL}")
-    
-    # Add controls
-    if st.button("Clear Chat History"):
-        st.session_state.chat_history = []
-        st.rerun()
-
-# --- Main Chat Interface ---
-st.markdown(
-    """
-    <style>
-    .chat-container {
-        max-width: 800px;
-        margin: auto;
-        padding: 1.5rem;
-        border-radius: 12px;
-        background-color: #f9fafb;
-        box-shadow: 0 0 15px rgba(0,0,0,0.05);
-    }
-    .user-msg {
-        background-color: #DCF8C6;
-        padding: 10px 15px;
-        border-radius: 15px;
-        margin-bottom: 10px;
-        width: fit-content;
-        max-width: 80%;
-        margin-left: auto;
-    }
-    .bot-msg {
-        background-color: #E8E8E8;
-        padding: 10px 15px;
-        border-radius: 15px;
-        margin-bottom: 10px;
-        width: fit-content;
-        max-width: 80%;
-    }
-    .metadata {
-        font-size: 0.75rem;
-        color: #666;
-        margin-top: 4px;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True,
+st.set_page_config(
+    page_title="RL-Optimized RAG",
+    page_icon="🔍",
+    layout="wide",
+    initial_sidebar_state="expanded",
 )
 
-st.title("💬 RAG Optimizer Chatbot")
+# ── Sidebar ──────────────────────────────────────────────────────────────────
+with st.sidebar:
+    st.title("🔍 RL-Optimized RAG")
+    st.caption("Disaggregated microservices pipeline")
+    st.divider()
 
-if "chat_history" not in st.session_state:
-    st.session_state.chat_history = []
+    st.subheader("Pipeline Architecture")
+    st.markdown(
+        """
+        ```
+        Client Query
+             ↓
+        API Gateway  (port 8000)
+             ↓ Redis Queue
+        Encoder Service  (MiniLM-L6-v2)
+             ↓ Redis Queue
+        Retriever Service  (Qdrant)
+             ↓ Redis Queue
+        LLM Generator  (×2 workers)
+             ↓ Redis Key
+        API Gateway → Response
+        ```
+        """
+    )
+    st.divider()
 
-# Input form
-with st.form(key="chat_form", clear_on_submit=True):
-    col1, col2 = st.columns([8, 1])
-    with col1:
-        user_input = st.text_input(
-            "Type your message...",
-            placeholder="Ask me anything about RAG optimization...",
-            label_visibility="collapsed",
-        )
-    with col2:
-        submitted = st.form_submit_button("➤", use_container_width=True)
+    st.subheader("Session Stats")
+    if "total_queries" not in st.session_state:
+        st.session_state.total_queries = 0
+    if "total_latency_ms" not in st.session_state:
+        st.session_state.total_latency_ms = 0.0
+    if "replica_counts" not in st.session_state:
+        st.session_state.replica_counts = {}
 
-if submitted and user_input:
-    # Add user message to history
-    st.session_state.chat_history.append({"role": "user", "content": user_input})
-    
-    # Call backend API
-    with st.spinner("🤖 Thinking..."):
+    col_a, col_b = st.columns(2)
+    col_a.metric("Queries", st.session_state.total_queries)
+    avg_lat = (
+        st.session_state.total_latency_ms / st.session_state.total_queries
+        if st.session_state.total_queries > 0
+        else 0
+    )
+    col_b.metric("Avg Latency", f"{avg_lat:.0f} ms")
+
+    if st.session_state.replica_counts:
+        st.markdown("**Replica distribution**")
+        for replica, count in sorted(st.session_state.replica_counts.items()):
+            pct = count / max(st.session_state.total_queries, 1) * 100
+            st.progress(pct / 100, text=f"{replica}: {count} ({pct:.0f}%)")
+
+    st.divider()
+
+    backend_url = st.text_input("API Gateway URL", value=API_GATEWAY_URL)
+    if st.button("Check health"):
         try:
-            start_time = time.time()
-            response = requests.post(
-                f"{API_GATEWAY_URL}/query",
-                json={"query": user_input},
-                timeout=65
-            )
-            end_time = time.time()
-            
-            if response.status_code == 200:
-                data = response.json()
-                bot_response = data.get("answer", "No response received")
-                job_id = data.get("job_id", "")
-                latency_ms = data.get("latency_ms", (end_time - start_time) * 1000)
-                selected_replica = data.get("selected_replica", "unknown")
-                
-                st.session_state.chat_history.append({
-                    "role": "bot",
-                    "content": bot_response,
-                    "job_id": job_id,
-                    "latency_ms": latency_ms,
-                    "replica": selected_replica
-                })
+            r = requests.get(f"{backend_url}/health", timeout=3)
+            if r.status_code == 200:
+                st.success("Backend healthy")
             else:
-                error_msg = f"API Error: {response.status_code} - {response.text}"
-                st.session_state.chat_history.append({
-                    "role": "bot",
-                    "content": f"❌ {error_msg}"
-                })
-        except requests.exceptions.Timeout:
-            st.session_state.chat_history.append({
-                "role": "bot",
-                "content": "❌ Request timed out. The backend may be overloaded."
-            })
-        except requests.exceptions.ConnectionError:
-            st.session_state.chat_history.append({
-                "role": "bot",
-                "content": f"❌ Cannot reach backend at {API_GATEWAY_URL}. Is Docker Compose running?"
-            })
+                st.warning(f"HTTP {r.status_code}")
         except Exception as e:
-            st.session_state.chat_history.append({
-                "role": "bot",
-                "content": f"❌ Error: {str(e)}"
-            })
+            st.error(f"Unreachable: {e}")
 
-# Display chat messages
-st.markdown('<div class="chat-container">', unsafe_allow_html=True)
-for msg in st.session_state.chat_history:
-    if msg["role"] == "user":
-        st.markdown(f'<div class="user-msg">{msg["content"]}</div>', unsafe_allow_html=True)
-    else:
-        content = msg["content"]
-        st.markdown(f'<div class="bot-msg">{content}', unsafe_allow_html=True)
-        if "latency_ms" in msg:
-            st.markdown(
-                f'<div class="metadata">⏱️ {msg["latency_ms"]:.0f}ms | 🎯 {msg["replica"]}</div>',
-                unsafe_allow_html=True
-            )
-        st.markdown('</div>', unsafe_allow_html=True)
-st.markdown('</div>', unsafe_allow_html=True)
+    if st.button("Clear chat"):
+        st.session_state.messages = []
+        st.session_state.total_queries = 0
+        st.session_state.total_latency_ms = 0.0
+        st.session_state.replica_counts = {}
+        st.rerun()
 
+    st.divider()
+    st.markdown(
+        "**Try asking:**\n"
+        "- What is RAG?\n"
+        "- How does load balancing work?\n"
+        "- Explain vector embeddings\n"
+        "- What is Redis used for?\n"
+        "- How does caching reduce latency?\n"
+        "- What is the CAP theorem?\n"
+        "- Explain Kubernetes"
+    )
+
+# ── Main chat area ────────────────────────────────────────────────────────────
+st.header("💬 RAG Chat Interface")
+
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+
+# Render chat history
+for msg in st.session_state.messages:
+    with st.chat_message(msg["role"], avatar="🧑" if msg["role"] == "user" else "🤖"):
+        st.markdown(msg["content"])
+        if msg["role"] == "assistant" and "meta" in msg:
+            meta = msg["meta"]
+            c1, c2, c3 = st.columns(3)
+            c1.metric("End-to-end latency", f"{meta['latency_ms']:.0f} ms")
+            c2.metric("Replica used", meta["replica"])
+            c3.metric("Job ID", meta["job_id"][:8] + "…")
+
+# Chat input
+query = st.chat_input("Ask something about distributed systems, RAG, caching…")
+
+if query:
+    # Show user message immediately
+    with st.chat_message("user", avatar="🧑"):
+        st.markdown(query)
+    st.session_state.messages.append({"role": "user", "content": query})
+
+    # Call backend and show assistant response
+    with st.chat_message("assistant", avatar="🤖"):
+        with st.spinner("Processing through RAG pipeline…"):
+            t0 = time.time()
+            try:
+                resp = requests.post(
+                    f"{backend_url}/query",
+                    json={"query": query},
+                    timeout=70,
+                )
+                elapsed_client = (time.time() - t0) * 1000
+
+                if resp.status_code == 200:
+                    data = resp.json()
+                    answer = data.get("answer", "No answer returned.")
+                    latency_ms = data.get("latency_ms", elapsed_client)
+                    replica = data.get("selected_replica", "unknown")
+                    job_id = data.get("job_id", "")
+
+                    st.markdown(answer)
+                    c1, c2, c3 = st.columns(3)
+                    c1.metric("End-to-end latency", f"{latency_ms:.0f} ms")
+                    c2.metric("Replica used", replica)
+                    c3.metric("Job ID", job_id[:8] + "…" if job_id else "—")
+
+                    # Update session stats
+                    st.session_state.total_queries += 1
+                    st.session_state.total_latency_ms += latency_ms
+                    st.session_state.replica_counts[replica] = (
+                        st.session_state.replica_counts.get(replica, 0) + 1
+                    )
+
+                    st.session_state.messages.append({
+                        "role": "assistant",
+                        "content": answer,
+                        "meta": {
+                            "latency_ms": latency_ms,
+                            "replica": replica,
+                            "job_id": job_id,
+                        },
+                    })
+
+                elif resp.status_code == 504:
+                    st.error("Pipeline timed out (60s). Is Docker Compose fully running?")
+                    st.session_state.messages.append({
+                        "role": "assistant",
+                        "content": "Pipeline timed out. Please check that all services are running.",
+                    })
+                else:
+                    detail = resp.json().get("detail", resp.text)
+                    st.error(f"API error {resp.status_code}: {detail}")
+                    st.session_state.messages.append({
+                        "role": "assistant",
+                        "content": f"Error {resp.status_code}: {detail}",
+                    })
+
+            except requests.exceptions.ConnectionError:
+                st.error(
+                    f"Cannot reach {backend_url}. "
+                    "Start the stack with `docker-compose up -d` and try again."
+                )
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": f"Cannot connect to {backend_url}. Is Docker Compose running?",
+                })
+            except requests.exceptions.Timeout:
+                st.error("Request timed out (70s). The pipeline may be overloaded.")
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": "Request timed out.",
+                })
+            except Exception as e:
+                st.error(f"Unexpected error: {e}")
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": f"Unexpected error: {e}",
+                })
+
+    # Rerun to update sidebar stats
+    st.rerun()

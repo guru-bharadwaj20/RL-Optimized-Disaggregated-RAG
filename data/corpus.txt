@@ -1,9 +1,43 @@
-The RAG pipeline uses an Asynchronous Message Queue for decoupling services and smoothing bursts.
+RAG (Retrieval-Augmented Generation) is an AI technique that enhances language models by first retrieving relevant documents from a knowledge base, then injecting that context into the prompt before generating an answer. This grounds responses in real, up-to-date information, reduces hallucinations, and allows the model to answer questions about data not seen during training. RAG systems combine the strengths of retrieval (precision, freshness) with generation (fluency, reasoning).
 
-Qdrant is a vector store that supports cosine and dot product similarity searches and is suitable for RAG storage.
+Qdrant is a high-performance vector database written in Rust, designed for storing and searching high-dimensional embedding vectors. It supports cosine, dot-product, and Euclidean distance metrics, making it ideal for semantic search, recommendation engines, and RAG pipelines. Qdrant can be deployed standalone or in a distributed cluster and exposes both REST and gRPC APIs.
 
-FastAPI microservices running in containers allow easy scaling and isolation of compute workloads.
+Vector search works by encoding text into dense embedding vectors and finding the nearest neighbors using distance metrics like cosine similarity. Unlike keyword search, vector search captures semantic meaning — it can find conceptually related documents even when exact words differ. The all-MiniLM-L6-v2 sentence-transformer model produces 384-dimensional embeddings suitable for semantic retrieval tasks.
 
-In this simple corpus, we provide small documents to test retrieval accuracy. Each paragraph is a document chunk.
+Embeddings are dense numerical vector representations of text produced by neural networks. The all-MiniLM-L6-v2 model encodes sentences into 384-dimensional vectors that cluster semantically similar content near each other in vector space. Embeddings enable semantic search, clustering, and retrieval — they are the core input for vector databases like Qdrant in RAG pipelines.
 
-Design systems with observability and idempotency in mind to reduce operational overhead.
+Sentence Transformers (SBERT) is a library built on top of Hugging Face Transformers that fine-tunes BERT-style models for semantic similarity tasks. Models like all-MiniLM-L6-v2 balance quality and speed — they encode sentences in milliseconds on CPU while achieving strong benchmark scores on semantic textual similarity (STS) tasks.
+
+FastAPI is a modern, high-performance Python web framework for building APIs. It uses Python type hints for automatic request validation via Pydantic, auto-generates Swagger UI and ReDoc documentation, and supports async/await for non-blocking I/O. FastAPI is among the fastest Python frameworks, comparable to NodeJS and Go for I/O-bound workloads.
+
+Redis is an in-memory data structure store that supports strings, hashes, lists, sets, sorted sets, and streams. As a message broker, Redis enables asynchronous, decoupled communication between microservices using LPUSH/BRPOP for reliable job queuing. It also supports pub/sub patterns, atomic counters for load tracking, and TTL-based key expiration for temporary result storage.
+
+Message queues decouple producers from consumers in distributed systems. When a producer pushes a job to the queue, it returns immediately without waiting for the consumer. Consumers process jobs at their own pace, enabling horizontal scaling (add more workers), absorbing traffic spikes (queue buffers bursts), and improving fault tolerance (jobs persist if a consumer crashes and restarts).
+
+Microservices architecture builds an application as a collection of small, independently deployable services, each owning a specific business capability. Services communicate over APIs or message queues. Benefits include independent scaling of bottleneck components, technology flexibility (each service can use a different stack), fault isolation, and faster deployments via CI/CD pipelines.
+
+Load balancing distributes incoming requests across multiple backend servers to maximize throughput and prevent overload. The round-robin algorithm routes requests sequentially; least-connections routes to the server with fewest active requests (best for variable-duration workloads like LLM inference); IP-hash enables sticky sessions by routing the same client to the same server consistently.
+
+Caching stores frequently accessed data in fast memory (RAM) to avoid repeated expensive computations or slow database lookups. Common eviction policies: LRU (Least Recently Used) evicts the oldest accessed item; LFU (Least Frequently Used) evicts the least popular item; TTL (Time To Live) expires entries after a fixed duration. Effective caching can reduce database load by over 90% and cut response latency from hundreds of milliseconds to single-digit milliseconds.
+
+Docker packages applications with all their dependencies into portable, reproducible containers that run identically across development, staging, and production environments. Docker Compose orchestrates multi-container applications in a single YAML file, defining services, networking, volumes, and startup dependencies — making local development of microservice architectures straightforward.
+
+Kubernetes (K8s) is an open-source container orchestration platform that automates the deployment, scaling, and management of containerized applications. Key features: self-healing (automatically restarts failed pods), horizontal pod autoscaling (scales replicas based on CPU/memory), rolling updates with zero downtime, and service discovery via internal cluster DNS.
+
+Prometheus is an open-source monitoring system that scrapes metrics from HTTP /metrics endpoints at regular intervals. Applications expose counters (total requests), gauges (active jobs), histograms (latency distributions), and summaries. PromQL lets you query time-series data for alerting and dashboards. Example: histogram_quantile(0.95, rate(api_gateway_query_latency_seconds_bucket[30s])) computes P95 latency.
+
+Observability in distributed systems relies on three pillars: metrics (quantitative measurements over time — Prometheus), logs (discrete timestamped events — structured JSON logging), and traces (the journey of a single request across multiple services — OpenTelemetry). These pillars together let engineers debug issues, understand performance bottlenecks, and set meaningful alerts.
+
+The CAP theorem states that a distributed system can guarantee at most two of three properties: Consistency (all nodes see the same data at the same time), Availability (every request receives a response), and Partition tolerance (the system continues operating despite network failures). Most cloud databases are CP (strong consistency, may reject requests during partitions) or AP (always available, may serve stale data).
+
+REST (Representational State Transfer) APIs use standard HTTP methods — GET (read), POST (create), PUT (update), DELETE (remove) — to expose resources as URLs. REST APIs are stateless, cacheable, and widely supported by all HTTP clients. FastAPI makes building REST APIs fast by combining Python type hints with Pydantic validation and automatic OpenAPI documentation generation.
+
+Recursion is a programming technique where a function calls itself to solve smaller sub-problems. Every recursive function requires a base case (where recursion stops) and a recursive case (where it reduces the problem and calls itself). Classic examples: computing factorial n! = n × (n-1)!, Fibonacci numbers F(n) = F(n-1) + F(n-2), and depth-first traversal of trees and graphs.
+
+Distributed systems consist of multiple independent computers that communicate over a network to achieve a common goal. They provide horizontal scalability (add more nodes), fault tolerance (survive individual node failures), and geographic distribution (serve users from nearby regions). Key challenges include consistency (keeping data in sync), partition tolerance, and handling network latency and failures gracefully.
+
+API gateways act as the single entry point for all client requests in a microservices architecture. They handle cross-cutting concerns like authentication, rate limiting, request routing, load balancing, SSL termination, and observability. An API gateway decouples clients from the internal service topology, so backend services can be rearranged without impacting clients.
+
+Asynchronous processing allows services to accept work and immediately respond to callers without waiting for the work to complete. Jobs are placed in a queue (like Redis) and workers process them in the background. This pattern improves throughput and resilience: the system can absorb traffic spikes by queuing excess load, and workers can be scaled independently of the API layer.
+
+Database indexing accelerates query performance by creating auxiliary data structures that allow the database engine to locate rows without scanning the entire table. B-tree indexes (used by most SQL databases) excel at range queries; hash indexes are fast for exact lookups; GIN/GiST indexes support full-text search. Over-indexing slows writes, so indexes should be chosen based on actual query patterns.
