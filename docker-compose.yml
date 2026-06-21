@@ -26,7 +26,25 @@ services:
       retries: 5
       start_period: 15s
 
-  # ── Mock LLM ───────────────────────────────────────────────────────────────
+  # ── Optional: Ollama LLM (run with: docker-compose --profile ollama up) ────
+  #   Pull model first: docker exec -it <ollama-container> ollama pull llama3.2
+  ollama:
+    image: ollama/ollama:latest
+    profiles: ["ollama"]
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    environment:
+      - OLLAMA_HOST=0.0.0.0
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:11434/api/version || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # ── Mock LLM (always available as fallback) ─────────────────────────────────
   mock_llm:
     build:
       context: ./services/mock_llm
@@ -43,7 +61,7 @@ services:
       start_period: 10s
     restart: unless-stopped
 
-  # ── LLM Generator Workers (2 replicas for load balancing demo) ─────────────
+  # ── LLM Generator Workers ──────────────────────────────────────────────────
   llm_generator_1:
     build:
       context: ./services/llm_generator
@@ -53,6 +71,10 @@ services:
       - REDIS_PORT=6379
       - LLM_SERVICE_URL=http://mock_llm:8000
       - LLM_MAX_RETRIES=3
+      # Uncomment to enable Ollama (also start with --profile ollama):
+      # - OLLAMA_BASE_URL=http://ollama:11434
+      # - OLLAMA_MODEL=llama3.2
+      # Or point to host Ollama: OLLAMA_BASE_URL=http://host.docker.internal:11434
     depends_on:
       redis:
         condition: service_healthy
@@ -69,6 +91,9 @@ services:
       - REDIS_PORT=6379
       - LLM_SERVICE_URL=http://mock_llm:8000
       - LLM_MAX_RETRIES=3
+      # Uncomment to enable Ollama:
+      # - OLLAMA_BASE_URL=http://ollama:11434
+      # - OLLAMA_MODEL=llama3.2
     depends_on:
       redis:
         condition: service_healthy
@@ -84,10 +109,20 @@ services:
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
+      - QDRANT_HOST=qdrant
+      - QDRANT_PORT=6333
+      - ENCODER_SERVICE_URL=http://encoder_service:8000
+      - VECTOR_DIMENSION=384
+      - EXACT_CACHE_ENABLED=true
+      - EXACT_CACHE_TTL=3600
+      - SEMANTIC_CACHE_ENABLED=true
+      - SEMANTIC_CACHE_THRESHOLD=0.95
     ports:
       - "8000:8000"
     depends_on:
       redis:
+        condition: service_healthy
+      qdrant:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\""]
@@ -105,12 +140,27 @@ services:
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
+      - QDRANT_HOST=qdrant
+      - QDRANT_PORT=6333
+      - QDRANT_COLLECTION=rag_collection
       - EMBEDDING_MODEL=all-MiniLM-L6-v2
       - EMBEDDING_DEVICE=cpu
       - VECTOR_DIMENSION=384
+      - CHUNK_SIZE=500
+      - CHUNK_OVERLAP=100
+    ports:
+      - "8001:8000"    # Exposed for direct access / debugging
     depends_on:
       redis:
         condition: service_healthy
+      qdrant:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\""]
+      interval: 20s
+      timeout: 10s
+      retries: 5
+      start_period: 60s    # Model download on first run
     restart: unless-stopped
 
   # ── Retriever Service ──────────────────────────────────────────────────────
@@ -162,3 +212,4 @@ services:
 
 volumes:
   qdrant_storage:
+  ollama_data:

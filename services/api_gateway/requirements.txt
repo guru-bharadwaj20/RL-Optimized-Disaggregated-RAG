@@ -6,3 +6,5 @@ redis
 python-dotenv
 gunicorn
 prometheus-client
+qdrant-client
+numpy
