@@ -1,6 +1,7 @@
 version: '3.8'
 
 services:
+  # ── Infrastructure ─────────────────────────────────────────────────────────
   redis:
     image: redis:7-alpine
     ports:
@@ -9,7 +10,7 @@ services:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       timeout: 5s
-      retries: 3
+      retries: 5
       start_period: 5s
 
   qdrant:
@@ -22,22 +23,27 @@ services:
       test: ["CMD-SHELL", "curl -fsS http://localhost:6333/collections || exit 1"]
       interval: 15s
       timeout: 10s
-      retries: 3
-      start_period: 10s
+      retries: 5
+      start_period: 15s
 
+  # ── Mock LLM ───────────────────────────────────────────────────────────────
   mock_llm:
     build:
       context: ./services/mock_llm
       dockerfile: Dockerfile
     environment:
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-      - API_PORT=8000
+      - PYTHONUNBUFFERED=1
     ports:
       - "8888:8000"
-    depends_on:
-      - redis
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
 
+  # ── LLM Generator Workers (2 replicas for load balancing demo) ─────────────
   llm_generator_1:
     build:
       context: ./services/llm_generator
@@ -45,13 +51,13 @@ services:
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-      - API_PORT=8000
       - LLM_SERVICE_URL=http://mock_llm:8000
-    ports:
-      - "11434:8000"
+      - LLM_MAX_RETRIES=3
     depends_on:
-      - redis
-      - mock_llm
+      redis:
+        condition: service_healthy
+      mock_llm:
+        condition: service_healthy
     restart: unless-stopped
 
   llm_generator_2:
@@ -61,15 +67,16 @@ services:
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-      - API_PORT=8000
       - LLM_SERVICE_URL=http://mock_llm:8000
-    ports:
-      - "11435:8000"
+      - LLM_MAX_RETRIES=3
     depends_on:
-      - redis
-      - mock_llm
+      redis:
+        condition: service_healthy
+      mock_llm:
+        condition: service_healthy
     restart: unless-stopped
 
+  # ── API Gateway ────────────────────────────────────────────────────────────
   api_gateway:
     build:
       context: ./services/api_gateway
@@ -77,13 +84,20 @@ services:
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-      - API_PORT=8000
     ports:
       - "8000:8000"
     depends_on:
-      - redis
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\""]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
     restart: unless-stopped
 
+  # ── Encoder Service ────────────────────────────────────────────────────────
   encoder_service:
     build:
       context: ./services/encoder_service
@@ -93,14 +107,13 @@ services:
       - REDIS_PORT=6379
       - EMBEDDING_MODEL=all-MiniLM-L6-v2
       - EMBEDDING_DEVICE=cpu
-      - API_PORT=8000
-    ports:
-      - "8001:8000"
+      - VECTOR_DIMENSION=384
     depends_on:
-      - redis
-      - qdrant
+      redis:
+        condition: service_healthy
     restart: unless-stopped
 
+  # ── Retriever Service ──────────────────────────────────────────────────────
   retriever_service:
     build:
       context: ./services/retriever_service
@@ -110,12 +123,30 @@ services:
       - REDIS_PORT=6379
       - QDRANT_HOST=qdrant
       - QDRANT_PORT=6333
-      - API_PORT=8000
+      - QDRANT_COLLECTION=rag_collection
+      - K_HITS=3
     depends_on:
-      - redis
-      - qdrant
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
     restart: unless-stopped
 
+  # ── Streamlit UI ───────────────────────────────────────────────────────────
+  streamlit:
+    build:
+      context: ./rag-optimizer/streamlit_app
+      dockerfile: Dockerfile
+    environment:
+      - API_GATEWAY_URL=http://api_gateway:8000
+    ports:
+      - "8501:8501"
+    depends_on:
+      api_gateway:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ── Monitoring ─────────────────────────────────────────────────────────────
   prometheus:
     image: prom/prometheus:latest
     volumes:
@@ -125,7 +156,9 @@ services:
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
     depends_on:
-      - api_gateway
+      api_gateway:
+        condition: service_healthy
+    restart: unless-stopped
 
 volumes:
   qdrant_storage:
