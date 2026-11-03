@@ -1,5 +1,13 @@
 # RL-Optimized Disaggregated RAG
 
+<p align="center">
+  <a href="RL-Optimized-Disaggregated-RAG%20Demo.mp4">
+    <img src="docs/RL-Optimized-Disaggregated-RAG%20Demo%20thumbnail.png" alt="Watch the RL-Optimized Disaggregated RAG demo video" width="720">
+  </a>
+  <br>
+  <sub>▶ <b><a href="RL-Optimized-Disaggregated-RAG%20Demo.mp4">Watch the RL-Optimized Disaggregated RAG demo</a></b> (74 s): the hackathon plan and the rework, 19 commits by four contributors, the quick start on a fresh clone, then twelve live steps against the running stack</sub>
+</p>
+
 **A fully disaggregated Retrieval-Augmented Generation system — encoder, retriever and generators as separate workers behind a gateway with two cache layers and an adaptive load balancer.**
 
 [![Docker Compose](https://img.shields.io/badge/Docker_Compose-10_services_+_Ollama-2496ED?logo=docker&logoColor=white)](docker-compose.yml)
